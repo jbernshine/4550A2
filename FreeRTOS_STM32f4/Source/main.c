@@ -1,216 +1,206 @@
-//******************************************************************************
-#include "stm32f4xx.h"
+#include "main.h"
 #include "stm32f4xx_conf.h"
-#include "discoveryf4utils.h"
-//******************************************************************************
 
-//******************************************************************************
 #include "FreeRTOS.h"
 #include "queue.h"
 #include "task.h"
 #include "croutine.h"
+#include "semphr.h"
 #include "timers.h"
-//******************************************************************************
+#include "codec.h"
 
-void vBlueTimerCallback(TimerHandle_t xTimer);
-void vRedTimerCallback(TimerHandle_t xTimer);
-void vGreenTimerCallback(TimerHandle_t xTimer);
-void vOrangeTimerCallback(TimerHandle_t xTimer);
+#define STACK_SIZE_MIN 128
+#define CLOCK_SPEED 84000000
+#define PRESCALER 41999
 
-void vLedBlinkBlue(void *pvParameters);
-void vLedBlinkRed(void *pvParameters);
-void vLedBlinkGreen(void *pvParameters);
-void vLedBlinkOrange(void *pvParameters);
-void vLongPressEvent(void *pvParameters);
+#define MS_TO_FORLOOP_ITERATIONS 50000
 
-void detectButtonPress(void *pvParameters);
+//Get the period in ticks for a given period in miliseconds
+int msToTicks(int periodInMs)
+{
+	return periodInMs * (CLOCK_SPEED / PRESCALER) / 1000 - 1;
+}
 
-void shortPressEvent();
-void longPressEvent();
+typedef enum Boolean
+{
+	false,
+	true,
+} boolean;
 
-void initButton();
-//void Delay(uint32_t val);
+//Tasks
 
-#define STACK_SIZE_MIN	128	/* usStackDepth	- the stack size DEFINED IN WORDS.*/
+typedef struct PIZZA
+{
+	int cookTime;
+	uint16_t led;
+	boolean cooking;
+	float soundFrequency;
+} Pizza;
 
-#define BLINK_TIME	1000
+typedef struct
+{
+	Pizza * pizza;
+	char * taskName;
+	TaskHandle_t taskHandle;
+	TimerHandle_t timer;
+	SemaphoreHandle_t semaphore;
+} TaskData;
 
-#define BLUE_MAX_COUNT	4
-#define RED_MAX_COUNT	6
-#define ORANGE_MAX_COUNT 8
-#define GREEN_MAX_COUNT 10
+typedef enum PizzaType
+{
+	VEGGIE,
+	HAWAIIAN,
+	BBQ,
+	DELUXE,
+	NUM_PIZZAS,
+} PizzaType;
 
-#define BLUE_TIMER	0
-#define RED_TIMER	1
-#define ORANGE_TIMER	2
-#define	GREEN_TIMER	3
+Pizza pizzas[NUM_PIZZAS] = {
+	[VEGGIE] = { 4, GPIO_Pin_13, false, 0.010,  },
+	[HAWAIIAN] = { 6, GPIO_Pin_12, false, 0.016 },
+	[BBQ] = { 8, GPIO_Pin_14, false, 0.017 },
+	[DELUXE] = { 10, GPIO_Pin_15, false, 0.018 },
+};
 
-#define NUM_TIMERS	5
-#define NUM_TASKS 5
-TimerHandle_t xTimers[NUM_TIMERS];
-TaskHandle_t xTasks[NUM_TASKS];
+TaskData pizzaTasks[NUM_PIZZAS] = {
+	[VEGGIE] = { .taskName = "Veggie" },
+	[HAWAIIAN] = { .taskName = "Hawaiian" },
+	[BBQ] = { .taskName = "BBW" },
+	[DELUXE] = { .taskName = "Deluxe" },
+};
 
+//Times in miliseconds
 #define BOUNCE_THRESHOLD 30
+#define DOUBLE_PRESS_THRESHOLD 500
+#define PIZZA_COUNTDOWN_PERIOD 1000
 #define LONG_PRESS_THRESHOLD 300
+#define SOUND_DURATION 500
 
-//******************************************************************************
-int main(void)
+#define BUTTON_TIMER TIM2
+
+//File variables
+volatile boolean isCooking;
+volatile PizzaType selectedPizza = VEGGIE;
+
+fir_8 filt;
+SemaphoreHandle_t audioSemaphore;
+
+
+//Hardware initiat
+
+void InitLeds()
 {
-	/*!< At this stage the microcontroller clock setting is already configured,
-	   this is done through SystemInit() function which is called from startup
-	   file (startup_stm32f4xx.s) before to branch to application main.
-	   To reconfigure the default setting of SystemInit() function, refer to
-	   system_stm32f4xx.c file
-	 */
+	GPIO_InitTypeDef GPIO_Initstructure;
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
 	
-	/*!< Most systems default to the wanted configuration, with the noticeable 
-		exception of the STM32 driver library. If you are using an STM32 with 
-		the STM32 driver library then ensure all the priority bits are assigned 
-		to be preempt priority bits by calling 
-		NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 ); before the RTOS is started.
-	*/
-	NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
-	
-	STM_EVAL_LEDInit(LED_BLUE);
-	STM_EVAL_LEDInit(LED_GREEN);
-	STM_EVAL_LEDInit(LED_ORANGE);
-	STM_EVAL_LEDInit(LED_RED);
-	
-	xTimers[0] = xTimerCreate((const char*)"Blue timer", pdMS_TO_TICKS(1000), pdTRUE, ( void * ) 0, vBlueTimerCallback);
-	xTimers[4] = xTimerCreate((const char*)"Long Press timer", pdMS_TO_TICKS(LONG_PRESS_THRESHOLD), pdFALSE, ( void * ) 0, vLongPressEvent);
-	
-	xTaskCreate( vLedBlinkBlue, (const char*)"Led Blink Task Blue", 
-		STACK_SIZE_MIN, NULL, tskIDLE_PRIORITY, xTasks[0] );
-	xTaskCreate( vLedBlinkRed, (const char*)"Led Blink Task Red", 
-		STACK_SIZE_MIN, NULL, tskIDLE_PRIORITY, xTasks[1] );
-	xTaskCreate( vLedBlinkGreen, (const char*)"Led Blink Task Green", 
-		STACK_SIZE_MIN, NULL, tskIDLE_PRIORITY, xTasks[2] );
-	xTaskCreate( vLedBlinkOrange, (const char*)"Led Blink Task Orange", 
-		STACK_SIZE_MIN, NULL, tskIDLE_PRIORITY, xTasks[3] );
-	xTaskCreate ( detectButtonPress, (const char*)"Detect Button Press",
-		STACK_SIZE_MIN, NULL, tskIDLE_PRIORITY, xTasks[4] );
-	
-	vTaskStartScheduler();
-}
-
-void vBlueTimerCallback( TimerHandle_t xTimer) {
-	uint32_t ulCount;
-	
-	ulCount = ( uint32_t ) pvTimerGetTimerID( xTimer );
-	ulCount++;
-	
-	if (ulCount >= BLUE_MAX_COUNT) {
-		xTimerStop(xTimer, 0 );
-		// Pizza Done
-	}
-	else {
-		vTimerSetTimerID( xTimer, (void * ) ulCount );
-		vTaskResume( xTasks[BLUE_TIMER] );
-	}
-	
-}
-
-void vRedTimerCallback( TimerHandle_t xTimer) {
-	uint32_t ulCount;
-	
-	ulCount = ( uint32_t ) pvTimerGetTimerID( xTimer );
-	ulCount++;
-	
-	if (ulCount >= RED_MAX_COUNT) {
-		xTimerStop(xTimer, 0 );
-		// Pizza Done
-	}
-	else {
-		vTimerSetTimerID( xTimer, (void * ) ulCount );
-		vTaskResume( xTasks[RED_TIMER] );
-	}
-	
-}
-
-void vGreenTimerCallback( TimerHandle_t xTimer) {
-	uint32_t ulCount;
-	
-	ulCount = ( uint32_t ) pvTimerGetTimerID( xTimer );
-	ulCount++;
-	
-	if (ulCount >= GREEN_MAX_COUNT) {
-		xTimerStop(xTimer, 0 );
-		// Pizza Done
-	}
-	else {
-		vTimerSetTimerID( xTimer, (void * ) ulCount );
-		vTaskResume( xTasks[GREEN_TIMER] );
-	}
-	
-}
-
-void vOrangeTimerCallback( TimerHandle_t xTimer) {
-	uint32_t ulCount;
-	
-	ulCount = ( uint32_t ) pvTimerGetTimerID( xTimer );
-	ulCount++;
-	
-	if (ulCount >= ORANGE_MAX_COUNT) {
-		xTimerStop(xTimer, 0 );
-		// Pizza Done
-	}
-	else {
-		vTimerSetTimerID( xTimer, (void * ) ulCount );
-		vTaskResume( xTasks[ORANGE_TIMER] );
-	}
-	
+ 	GPIO_Initstructure.GPIO_Pin = GPIO_Pin_12 | GPIO_Pin_13 | GPIO_Pin_14 | GPIO_Pin_15;
+	GPIO_Initstructure.GPIO_Mode = GPIO_Mode_OUT;
+	GPIO_Initstructure.GPIO_OType = GPIO_OType_PP;	
+	GPIO_Initstructure.GPIO_PuPd = GPIO_PuPd_DOWN;
+	GPIO_Initstructure.GPIO_Speed = GPIO_Speed_100MHz;
+	GPIO_Init(GPIOD, &GPIO_Initstructure);
 }
 
 
-
-void vLedBlinkBlue(void *pvParameters)
+void InitButton()
 {
-	for(;;)
+	GPIO_InitTypeDef GPIO_Initstructure;
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE); 
+	
+	GPIO_Initstructure.GPIO_Mode = GPIO_Mode_IN;
+	GPIO_Initstructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_Initstructure.GPIO_Pin = GPIO_Pin_0;
+	GPIO_Initstructure.GPIO_PuPd = GPIO_PuPd_DOWN;
+	GPIO_Initstructure.GPIO_Speed = GPIO_Speed_100MHz;
+	GPIO_Init(GPIOA, &GPIO_Initstructure);
+}
+
+void InitTimer()
+{
+	TIM_TimeBaseInitTypeDef timer_InitStructure;
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+	
+	timer_InitStructure.TIM_Prescaler = PRESCALER; 
+	timer_InitStructure.TIM_CounterMode = TIM_CounterMode_Up; 
+	timer_InitStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+	timer_InitStructure.TIM_RepetitionCounter = 0;
+	timer_InitStructure.TIM_Period = msToTicks(LONG_PRESS_THRESHOLD);
+	TIM_TimeBaseInit(BUTTON_TIMER, &timer_InitStructure);
+}
+
+//Hardware control
+void turnOffLed()
+{
+	GPIO_ResetBits(GPIOD, pizzas[selectedPizza].led);
+}
+
+void turnOnLed(uint16_t led)
+{
+	GPIO_ResetBits(GPIOD, 0xFFFF);
+	GPIO_SetBits(GPIOD, led);
+}
+
+//Code adapted from sample project.
+void playSound(float frequency)
+{
+	xSemaphoreTake(audioSemaphore, portMAX_DELAY);
+	codec_ctrl_init();
+	I2S_Cmd(CODEC_I2S, ENABLE);
+	for (sampleCounter = 0; sampleCounter < SOUND_DURATION * 4000; sampleCounter++)
 	{
-		STM_EVAL_LEDToggle(LED_BLUE);
-		vTaskDelay( BLINK_TIME / portTICK_RATE_MS );
-		STM_EVAL_LEDToggle(LED_BLUE);
-		vTaskSuspend( xTasks[BLUE_TIMER] );
-		
+	 	if (SPI_I2S_GetFlagStatus(CODEC_I2S, SPI_I2S_FLAG_TXE))
+   	{
+   		SPI_I2S_SendData(CODEC_I2S, sample);
+   		//only update on every second sample to insure that L & R ch. have the same sample value
+   		if (sampleCounter & 0x00000001)
+   		{
+   			sawWave += frequency;
+   			if (sawWave > 1.0)
+   				sawWave -= 2.0;
+    		filteredSaw = updateFilter(&filt, sawWave);
+    		sample = (int16_t)(NOTEAMPLITUDE*filteredSaw);
+    	}
+    	sampleCounter++;
+    }
 	}
+	codec_ctrl_init();
+	xSemaphoreGive(audioSemaphore);
 }
 
-void vLedBlinkRed(void *pvParameters)
+void startCooking()
 {
-	for(;;)
+	portBASE_TYPE pxTaskWoken;
+	Pizza * pizza = &pizzas[selectedPizza];
+	pizzas[selectedPizza].cooking = true;
+	//All pizzas have same priority; hence, will never need to preempt here
+	if (pxTaskWoken == pdTRUE)
 	{
-		STM_EVAL_LEDToggle(LED_RED);
-		vTaskDelay( BLINK_TIME / portTICK_RATE_MS );
-		STM_EVAL_LEDToggle(LED_RED);
-		vTaskSuspend( xTasks[LED_RED] );
+		portYIELD_FROM_ISR(pdTRUE);
 	}
 }
 
-void vLedBlinkGreen(void *pvParameters)
+void stopCooking()
 {
-	for(;;)
+}
+
+//Handle button input depending on the state of the program.
+void shortPressEvent() {
+	if (isCooking)
 	{
-		STM_EVAL_LEDToggle(LED_GREEN);
-		vTaskDelay( BLINK_TIME / portTICK_RATE_MS );
-		STM_EVAL_LEDToggle(LED_GREEN);
-		vTaskSuspend( xTasks[LED_GREEN] );
+		stopCooking();
+	}
+	else
+	{
+		startCooking();
 	}
 }
 
-void vLedBlinkOrange(void *pvParameters)
-{
-	for(;;)
-	{
-		STM_EVAL_LEDToggle(LED_ORANGE);
-		vTaskDelay( BLINK_TIME / portTICK_RATE_MS );
-		STM_EVAL_LEDToggle(LED_ORANGE);
-		vTaskSuspend( xTasks[LED_ORANGE] );
-	}
-}
+/* Getting button events
+ * Use a software timer to measure the time taken
+ * If below a certain threshold, it's a bounce -- ignore
+ * Otherwse, its a press
+ */
 
-void vLongPressEvent(void *pvParameters) {
-	vTimerSetTimerID(xTimers[4], (void *) 1);
-}
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
 void detectButtonPress(void *pvParameters) {
@@ -226,10 +216,10 @@ void detectButtonPress(void *pvParameters) {
 					// Still pressed
 					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
 						if (!xTimerIsTimerActive(xTimers[4])) {
-							vTimerSetTimerID(xTimers[4], 0);
-							xTimerReset(xTimers[4], 0);
+							vTimerSetTimerID(xButtonTimer, 0);
+							xTimerReset(xButtonTimer, 0);
 						}
-						else if ( (int) pvTimerGetTimerID(xTimers[4]) == 1) {
+						else if ( (int) pvTimerGetTimerID(xTimers[4] == 1) {
 							longPressEvent();
 						}
 					}
@@ -251,23 +241,114 @@ void detectButtonPress(void *pvParameters) {
 	}
 }
 
-void shortPressEvent() {
-	
-}
-
-void longPressEvent() {
-	
-}
-
-void initButton() 
+void debug()
 {
-	GPIO_InitTypeDef GPIO_InitStructure2;
-  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
-  GPIO_InitStructure2.GPIO_Mode = GPIO_Mode_IN;
-  GPIO_InitStructure2.GPIO_Pin =  GPIO_Pin_0;
-  GPIO_InitStructure2.GPIO_PuPd = GPIO_PuPd_DOWN;
-  GPIO_InitStructure2.GPIO_Speed = GPIO_Speed_100MHz;
-  GPIO_InitStructure2.GPIO_OType = GPIO_OType_PP;
-  GPIO_Init(GPIOA, &GPIO_InitStructure2);
-}	
-//******************************************************************************
+	GPIO_SetBits(GPIOD, 0xFFFF);
+}
+
+SemaphoreHandle_t ovenSemaphore;
+
+void pizzaTask(void * pvParameter)
+{
+	TaskData * taskData = (TaskData*) pvParameter;
+	Pizza * pizza = taskData->pizza;
+	for (;;)
+	{
+		if  (xSemaphoreTake(taskData->semaphore, portMAX_DELAY))
+		{
+			for (int i = 0; i < pizza->cookTime; i++)
+			{
+				if (xSemaphoreTake(ovenSemaphore, portMAX_DELAY))
+				{
+					GPIO_SetBits(GPIOD, pizza->led);
+					vTaskDelay(500 / portTICK_RATE_MS);
+					GPIO_ResetBits(GPIOD, pizza->led);
+					vTaskDelay(500 / portTICK_RATE_MS);
+					if (i == pizza->cookTime - 1)
+					{
+						playSound(pizza->soundFrequency);
+					}
+					xSemaphoreGive(ovenSemaphore);
+				}
+			}
+			pizza->cooking = false;
+			GPIO_ResetBits(GPIOD, pizza->led);
+		}
+	}
+}
+
+void createTasks()
+{
+	TaskData * taskData;
+	for (int i = 0; i < NUM_PIZZAS; i++)
+	{
+		taskData = &pizzaTasks[i];
+		taskData->pizza = &pizzas[i];
+		taskData->taskHandle = (TaskHandle_t)i;
+		xTaskCreate(pizzaTask, taskData->taskName, STACK_SIZE_MIN, (void*)taskData, 2, taskData->taskHandle);
+		taskData->semaphore = xSemaphoreCreateBinary();
+		if (taskData->semaphore == NULL)
+			debug();
+	}
+}
+
+int main()
+{
+	SystemInit();
+	InitLeds();
+	InitButton();
+	InitTimer();
+	ovenSemaphore = xSemaphoreCreateBinary();
+	xSemaphoreGive(ovenSemaphore);
+	audioSemaphore = xSemaphoreCreateBinary();
+	xSemaphoreGive(audioSemaphore);
+	
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+	codec_init();
+	initFilter(&filt);
+	
+	createTasks();
+	vTaskStartScheduler();
+}
+
+// a very crude FIR lowpass filter
+float updateFilter(fir_8* filt, float val)
+{
+	uint16_t valIndex;
+	uint16_t paramIndex;
+	float outval = 0.0;
+
+	valIndex = filt->currIndex;
+	filt->tabs[valIndex] = val;
+
+	for (paramIndex=0; paramIndex<8; paramIndex++)
+	{
+		outval += (filt->params[paramIndex]) * (filt->tabs[(valIndex+paramIndex)&0x07]);
+	}
+
+	valIndex++;
+	valIndex &= 0x07;
+
+	filt->currIndex = valIndex;
+	portTICK_RATE_MS;
+	return outval;
+}
+
+void initFilter(fir_8* theFilter)
+{
+	uint8_t i;
+
+	theFilter->currIndex = 0;
+
+	for (i=0; i<8; i++)
+		theFilter->tabs[i] = 0.0;
+
+	theFilter->params[0] = 0.01;
+	theFilter->params[1] = 0.05;
+	theFilter->params[2] = 0.12;
+	theFilter->params[3] = 0.32;
+	theFilter->params[4] = 0.32;
+	theFilter->params[5] = 0.12;
+	theFilter->params[6] = 0.05;
+	theFilter->params[7] = 0.01;
+}
