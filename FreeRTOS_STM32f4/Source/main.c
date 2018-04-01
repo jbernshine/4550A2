@@ -13,13 +13,15 @@
 #define CLOCK_SPEED 84000000
 #define PRESCALER 41999
 
-#define MS_TO_FORLOOP_ITERATIONS 50000
+#define BLUE_MAX_COUNT	4
 
-//Get the period in ticks for a given period in miliseconds
-int msToTicks(int periodInMs)
-{
-	return periodInMs * (CLOCK_SPEED / PRESCALER) / 1000 - 1;
-}
+#define NUM_TIMERS	5
+#define NUM_TASKS 5
+
+//Function prototypes
+void vLongPressEvent(void* params);
+
+#define MS_TO_FORLOOP_ITERATIONS 50000
 
 typedef enum Boolean
 {
@@ -29,12 +31,15 @@ typedef enum Boolean
 
 //Tasks
 
-typedef struct PIZZA
+typedef struct 
 {
-	int cookTime;
+	int wcet;
+	int timeCooked;
+	int period;
+	int priority;
+	int deadline;
 	uint16_t led;
-	boolean cooking;
-	float soundFrequency;
+	float freq;
 } Pizza;
 
 typedef struct
@@ -48,46 +53,80 @@ typedef struct
 
 typedef enum PizzaType
 {
-	VEGGIE,
 	HAWAIIAN,
-	BBQ,
-	DELUXE,
+	VEGGIE,
+	PEPPERONI,
+	SEAFOOD,
 	NUM_PIZZAS,
 } PizzaType;
 
 Pizza pizzas[NUM_PIZZAS] = {
-	[VEGGIE] = { 4, GPIO_Pin_13, false, 0.010,  },
-	[HAWAIIAN] = { 6, GPIO_Pin_12, false, 0.016 },
-	[BBQ] = { 8, GPIO_Pin_14, false, 0.017 },
-	[DELUXE] = { 10, GPIO_Pin_15, false, 0.018 },
+	[HAWAIIAN] = {
+		.wcet = 6, 
+		.period = 40, 
+		.priority = 2, 
+		.deadline = 10, 
+		.led = GPIO_Pin_13, 
+		.freq = 0.09 
+	},
+	[VEGGIE] = {
+		.wcet = 4, 
+		.period = 30, 
+		.priority = 1, 
+		.deadline = 10, 
+		.led = GPIO_Pin_12, 
+		.freq = 0.013 
+	},	
+	[PEPPERONI] = {
+		.wcet = 8, 
+		.period = 40, 
+		.priority = 2, 
+		.deadline = 15, 
+		.led = GPIO_Pin_14, 
+		.freq = 0.015 
+	},
+	[SEAFOOD] = { 
+		.wcet = 3, 
+		.period = 20, 
+		.priority = 3, 
+		.deadline = 5, 
+		.led = GPIO_Pin_15, 
+		.freq = 0.018 
+	},
 };
 
 TaskData pizzaTasks[NUM_PIZZAS] = {
-	[VEGGIE] = { .taskName = "Veggie" },
 	[HAWAIIAN] = { .taskName = "Hawaiian" },
-	[BBQ] = { .taskName = "BBW" },
-	[DELUXE] = { .taskName = "Deluxe" },
+	[VEGGIE] = { .taskName = "Veggie" },
+	[PEPPERONI] = { .taskName = "Pepperoni" },
+	[SEAFOOD] = { .taskName = "Seafood" },
 };
 
 //Times in miliseconds
 #define BOUNCE_THRESHOLD 30
-#define DOUBLE_PRESS_THRESHOLD 500
 #define PIZZA_COUNTDOWN_PERIOD 1000
 #define LONG_PRESS_THRESHOLD 300
 #define SOUND_DURATION 500
 
 #define BUTTON_TIMER TIM2
 
-//File variables
-volatile boolean isCooking;
-volatile PizzaType selectedPizza = VEGGIE;
+/********************************
+ * File Variables
+ *******************************/
 
+volatile boolean isCooking = false;
+unsigned int timeElapsed;
 fir_8 filt;
 SemaphoreHandle_t audioSemaphore;
+xTimerHandle xButtonTimer;
+TaskHandle_t xTasks[NUM_TASKS];
+PizzaType scheduledPizza;
+PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
 
-
-//Hardware initiat
-
+/********************************
+ * Hardware initialization
+ *******************************/
+ 
 void InitLeds()
 {
 	GPIO_InitTypeDef GPIO_Initstructure;
@@ -101,6 +140,10 @@ void InitLeds()
 	GPIO_Init(GPIOD, &GPIO_Initstructure);
 }
 
+void debug()
+{
+	GPIO_SetBits(GPIOD, 0xFFFF);
+}
 
 void InitButton()
 {
@@ -115,23 +158,9 @@ void InitButton()
 	GPIO_Init(GPIOA, &GPIO_Initstructure);
 }
 
-void InitTimer()
+void InitTimers()
 {
-	TIM_TimeBaseInitTypeDef timer_InitStructure;
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-	
-	timer_InitStructure.TIM_Prescaler = PRESCALER; 
-	timer_InitStructure.TIM_CounterMode = TIM_CounterMode_Up; 
-	timer_InitStructure.TIM_ClockDivision = TIM_CKD_DIV1;
-	timer_InitStructure.TIM_RepetitionCounter = 0;
-	timer_InitStructure.TIM_Period = msToTicks(LONG_PRESS_THRESHOLD);
-	TIM_TimeBaseInit(BUTTON_TIMER, &timer_InitStructure);
-}
-
-//Hardware control
-void turnOffLed()
-{
-	GPIO_ResetBits(GPIOD, pizzas[selectedPizza].led);
+	xButtonTimer = xTimerCreate((const char*)"Long Press timer", pdMS_TO_TICKS(LONG_PRESS_THRESHOLD), pdFALSE, ( void * ) 0, vLongPressEvent);
 }
 
 void turnOnLed(uint16_t led)
@@ -167,24 +196,163 @@ void playSound(float frequency)
 	xSemaphoreGive(audioSemaphore);
 }
 
+boolean hasMissedDeadline(Pizza * pizza)
+{
+	return timeElapsed % pizza->period >= pizza->deadline;
+}
+
+boolean finishedCooking(Pizza * pizza)
+{
+	return pizza->wcet == pizza->timeCooked;
+}
+
+PizzaType maxPriority(PizzaType type1, PizzaType type2)
+{
+	Pizza * pizza1 = &pizzas[type1];
+	Pizza * pizza2 = &pizzas[type2];
+	return pizza1->priority < pizza2->priority? type2 : type1;
+}
+
+PizzaType fixedPriority(PizzaType pizzaType1, PizzaType pizzaType2)
+{
+	Pizza * pizza1 = &pizzas[pizzaType1];
+	Pizza * pizza2 = &pizzas[pizzaType2];
+	PizzaType higherPriority;
+	
+	if (hasMissedDeadline(pizza1) == hasMissedDeadline(pizza2))
+		higherPriority = maxPriority(pizzaType1, pizzaType2);
+	
+	else 
+		higherPriority = hasMissedDeadline(pizza2)? pizzaType1 : pizzaType2;
+	
+	return higherPriority;
+}
+
+int timeUntilDeadline(Pizza * pizza)
+{
+	return pizza->deadline - timeElapsed % pizza->period;
+}
+
+PizzaType leastLaxityFirst(PizzaType pizzaType1, PizzaType pizzaType2)
+{
+	Pizza * pizza1 = &pizzas[pizzaType1];
+	Pizza * pizza2 = &pizzas[pizzaType2];
+	int timeLeft1 = timeUntilDeadline(pizza1) - (pizza1->wcet - pizza1->timeCooked);
+	int timeLeft2 = timeUntilDeadline(pizza2) - (pizza2->wcet - pizza2->timeCooked);
+	PizzaType higherPriority;
+	
+	if ((timeLeft1 < 0 && timeLeft2 < 0) || (timeLeft1 == timeLeft2))
+		higherPriority = maxPriority(pizzaType1, pizzaType2);
+
+	else if (timeLeft2 < 0 || timeLeft1 < 0)
+		higherPriority = timeLeft2 < 0 ? pizzaType1 : pizzaType2;
+
+	else
+		higherPriority = timeLeft2 < timeLeft1 ? pizzaType2 : pizzaType1;;
+	
+	return higherPriority;
+}
+
+PizzaType earliestDeadlineFirst(PizzaType pizzaType1, PizzaType pizzaType2)
+{
+	int timeLeft1 = timeUntilDeadline(&pizzas[pizzaType1]);
+	int timeLeft2 = timeUntilDeadline(&pizzas[pizzaType2]);
+	PizzaType higherPriority;
+	
+	if ((timeLeft1 <= 0 && timeLeft2 <= 0) || (timeLeft1 == timeLeft2))
+		higherPriority = maxPriority(pizzaType1, pizzaType2);
+
+	else if (timeLeft2 <= 0 || timeLeft1 <= 0)
+		higherPriority = timeLeft2 <= 0 ? pizzaType1 : pizzaType2;
+
+	else
+		higherPriority = timeLeft2 < timeLeft1 ? pizzaType2 : pizzaType1;;
+	
+	return higherPriority;
+}
+
+
+PizzaType chooseHigherPriority(PizzaType pizzaType1, PizzaType pizzaType2)
+{
+	Pizza * pizza1 = &pizzas[pizzaType1];
+	Pizza * pizza2 = &pizzas[pizzaType2];
+	
+	PizzaType higherPriority;
+	
+	if (finishedCooking(pizza2))
+		higherPriority = pizzaType1;
+	
+	else if (finishedCooking(pizza1))
+		higherPriority = pizzaType2;
+
+	else
+		higherPriority = schedulingDisciplineCompare(pizzaType1, pizzaType2);
+	
+	return higherPriority;
+}
+
+void initScheduler()
+{
+	timeElapsed = 0;
+	for (int i = 0; i < NUM_PIZZAS; i++)
+	{
+		pizzas[i].timeCooked = 0;
+	}
+	schedulingDisciplineCompare = &leastLaxityFirst;
+	scheduledPizza = NUM_PIZZAS - 1;
+}
+
+void scheduler()
+{
+	boolean taskStarted = false;
+	while (!taskStarted && isCooking)
+	{
+		TaskData * nextTask;
+		PizzaType currHighest;
+		PizzaType nextIndex;
+		currHighest = (scheduledPizza + 1) % NUM_PIZZAS;
+		
+		if (pizzas[currHighest].period == 0)
+		{
+			pizzas->timeCooked = 0;
+		}
+		for (int i = 1; i < NUM_PIZZAS; i++)
+		{
+			nextIndex = (scheduledPizza + i + 1) % NUM_PIZZAS;
+			if (timeElapsed % pizzas[nextIndex].period == 0)
+				pizzas[nextIndex].timeCooked = 0;
+			currHighest = chooseHigherPriority(currHighest, nextIndex);
+		}
+		nextTask = &pizzaTasks[currHighest];
+	
+		if (finishedCooking(&pizzas[currHighest]))
+		{
+			vTaskDelay(1000);
+		}
+		else
+		{
+			scheduledPizza = currHighest;
+			xSemaphoreGive(nextTask->semaphore);
+			taskStarted = true;
+		}
+		timeElapsed += 1;
+	}
+}
+
 void startCooking()
 {
-	portBASE_TYPE pxTaskWoken;
-	Pizza * pizza = &pizzas[selectedPizza];
-	pizzas[selectedPizza].cooking = true;
-	//All pizzas have same priority; hence, will never need to preempt here
-	if (pxTaskWoken == pdTRUE)
-	{
-		portYIELD_FROM_ISR(pdTRUE);
-	}
+	isCooking = true;
+	initScheduler();
+	scheduler();
 }
 
 void stopCooking()
 {
+	isCooking = false;
 }
 
 //Handle button input depending on the state of the program.
-void shortPressEvent() {
+void buttonPressEvent() {
 	if (isCooking)
 	{
 		stopCooking();
@@ -195,58 +363,25 @@ void shortPressEvent() {
 	}
 }
 
-/* Getting button events
- * Use a software timer to measure the time taken
- * If below a certain threshold, it's a bounce -- ignore
- * Otherwse, its a press
- */
 
+void vLongPressEvent(void *pvParameters) {
+}
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
-void detectButtonPress(void *pvParameters) {
-		
+void detectButtonPress(void *pvParameters) 
+{
 	for(;;)
-		{
-			if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
-				
-				// Button pressed
-				while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) >0) {
-					vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-					
-					// Still pressed
-					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
-						if (!xTimerIsTimerActive(xTimers[4])) {
-							vTimerSetTimerID(xButtonTimer, 0);
-							xTimerReset(xButtonTimer, 0);
-						}
-						else if ( (int) pvTimerGetTimerID(xTimers[4] == 1) {
-							longPressEvent();
-						}
-					}
-				}
-				
-				// Button lifted
-				while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-					vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-					
-					// Still lifted
-					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
-						if (xTimerIsTimerActive(xTimers[4])) {
-							xTimerStop(xTimers[4], 0);
-							shortPressEvent();
-						}
-					}
-				}
+	{
+		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+			// Button pressed
+			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+			if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0)
+				buttonPressEvent();
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) > 0);
+			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 		}
 	}
 }
-
-void debug()
-{
-	GPIO_SetBits(GPIOD, 0xFFFF);
-}
-
-SemaphoreHandle_t ovenSemaphore;
 
 void pizzaTask(void * pvParameter)
 {
@@ -256,23 +391,22 @@ void pizzaTask(void * pvParameter)
 	{
 		if  (xSemaphoreTake(taskData->semaphore, portMAX_DELAY))
 		{
-			for (int i = 0; i < pizza->cookTime; i++)
+			if (pizza->timeCooked == pizza->wcet)
 			{
-				if (xSemaphoreTake(ovenSemaphore, portMAX_DELAY))
-				{
-					GPIO_SetBits(GPIOD, pizza->led);
-					vTaskDelay(500 / portTICK_RATE_MS);
-					GPIO_ResetBits(GPIOD, pizza->led);
-					vTaskDelay(500 / portTICK_RATE_MS);
-					if (i == pizza->cookTime - 1)
-					{
-						playSound(pizza->soundFrequency);
-					}
-					xSemaphoreGive(ovenSemaphore);
-				}
+				playSound(pizza->freq);
+				GPIO_ResetBits(GPIOD, pizza->led);
 			}
-			pizza->cooking = false;
-			GPIO_ResetBits(GPIOD, pizza->led);
+			
+			else
+			{
+				GPIO_SetBits(GPIOD, pizza->led);
+				vTaskDelay(500 / portTICK_RATE_MS);
+				GPIO_ResetBits(GPIOD, pizza->led);
+				vTaskDelay(500 / portTICK_RATE_MS);
+				pizza->timeCooked++;
+			}
+					
+			scheduler();
 		}
 	}
 }
@@ -285,11 +419,11 @@ void createTasks()
 		taskData = &pizzaTasks[i];
 		taskData->pizza = &pizzas[i];
 		taskData->taskHandle = (TaskHandle_t)i;
-		xTaskCreate(pizzaTask, taskData->taskName, STACK_SIZE_MIN, (void*)taskData, 2, taskData->taskHandle);
 		taskData->semaphore = xSemaphoreCreateBinary();
-		if (taskData->semaphore == NULL)
-			debug();
+		xTaskCreate(pizzaTask, taskData->taskName, STACK_SIZE_MIN, (void*)taskData, 1, taskData->taskHandle);
 	}
+	
+	xTaskCreate(detectButtonPress, "button task", STACK_SIZE_MIN, NULL, 1, NULL);
 }
 
 int main()
@@ -297,12 +431,10 @@ int main()
 	SystemInit();
 	InitLeds();
 	InitButton();
-	InitTimer();
-	ovenSemaphore = xSemaphoreCreateBinary();
-	xSemaphoreGive(ovenSemaphore);
+	InitTimers();
 	audioSemaphore = xSemaphoreCreateBinary();
 	xSemaphoreGive(audioSemaphore);
-	
+	NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
 	codec_init();
 	initFilter(&filt);
@@ -330,7 +462,6 @@ float updateFilter(fir_8* filt, float val)
 	valIndex &= 0x07;
 
 	filt->currIndex = valIndex;
-	portTICK_RATE_MS;
 	return outval;
 }
 
