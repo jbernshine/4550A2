@@ -120,7 +120,6 @@ TaskData pizzaTasks[NUM_PIZZAS] = {
 /********************************
  * File Variables
  *******************************/
-
 volatile boolean isCooking = false;
 unsigned int timeElapsed;
 fir_8 filt;
@@ -400,11 +399,12 @@ void longPressEvent()
 
 
 void vLongPressEvent(void *pvParameters) {
+	
 }
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
 void detectButtonPress(void *pvParameters) {
-		
+	
 	for(;;)
 	{
 		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
@@ -424,19 +424,17 @@ void detectButtonPress(void *pvParameters) {
 			
 			// Button lifted
 			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-				vTaskDelay((LONG_PRESS_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
-				// Still lifted (short press)
+				// Still lifted
 				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+					// Short Press
 					if (xTimerIsTimerActive(xButtonTimer)) {
 						xTimerStop(xButtonTimer, 0);
 						shortPressEvent();
 					}
-				}
-				// Long press
-				else {
-					if (xTimerIsTimerActive(xButtonTimer)) {
-						xTimerStop(xButtonTimer, 0);
+					// Long Press
+					else {
 						longPressEvent();
 					}
 				}
