@@ -407,7 +407,7 @@ void longPressEvent()
 }
 
 void doublePressEvent() {
-	
+	stopCooking();
 }
 
 void vLongPressEvent(void *pvParameters) {
