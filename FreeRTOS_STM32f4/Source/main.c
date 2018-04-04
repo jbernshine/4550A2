@@ -76,7 +76,7 @@ Pizza pizzas[NUM_PIZZAS] = {
 		.priority = 2, 
 		.deadline = 10, 
 		.led = GPIO_Pin_13, 
-		.freq = 0.09 
+		.freq = 0.011 
 	},
 	[VEGGIE] = {
 		.wcet = 4, 
@@ -100,7 +100,7 @@ Pizza pizzas[NUM_PIZZAS] = {
 		.priority = 3, 
 		.deadline = 5, 
 		.led = GPIO_Pin_15, 
-		.freq = 0.018 
+		.freq = 0.017 
 	},
 };
 
@@ -129,7 +129,7 @@ SemaphoreHandle_t missedDeadlineSemaphore;
 xTimerHandle xButtonTimer;
 PizzaType scheduledPizza;
 PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
-
+QueueHandle_t soundQueue;
 
 /********************************
  * Hardware initialization
@@ -178,30 +178,38 @@ void turnOnLed(uint16_t led)
 }
 
 //Code adapted from sample project.
-void playSound(float frequency)
+void vPlaySound(void * params)
 {
-	xSemaphoreTake(audioSemaphore, portMAX_DELAY);
-	codec_ctrl_init();
-	I2S_Cmd(CODEC_I2S, ENABLE);
-	for (sampleCounter = 0; sampleCounter < SOUND_DURATION * 4000; sampleCounter++)
+	float frequency;
+	for (;;)
 	{
-	 	if (SPI_I2S_GetFlagStatus(CODEC_I2S, SPI_I2S_FLAG_TXE))
-   	{
-   		SPI_I2S_SendData(CODEC_I2S, sample);
-   		//only update on every second sample to insure that L & R ch. have the same sample value
-   		if (sampleCounter & 0x00000001)
-   		{
-   			sawWave += frequency;
-   			if (sawWave > 1.0)
-   				sawWave -= 2.0;
-    		filteredSaw = updateFilter(&filt, sawWave);
-    		sample = (int16_t)(NOTEAMPLITUDE*filteredSaw);
-    	}
-    	sampleCounter++;
-    }
+		xQueueReceive(soundQueue, &frequency, portMAX_DELAY);
+		codec_ctrl_init();
+		I2S_Cmd(CODEC_I2S, ENABLE);
+		for (sampleCounter = 0; sampleCounter < SOUND_DURATION * 4000; sampleCounter++)
+		{
+			if (SPI_I2S_GetFlagStatus(CODEC_I2S, SPI_I2S_FLAG_TXE))
+			{
+				SPI_I2S_SendData(CODEC_I2S, sample);
+				//only update on every second sample to insure that L & R ch. have the same sample value
+				if (sampleCounter & 0x00000001)
+				{
+					sawWave += frequency;
+					if (sawWave > 1.0)
+						sawWave -= 2.0;
+					filteredSaw = updateFilter(&filt, sawWave);
+					sample = (int16_t)(NOTEAMPLITUDE*filteredSaw);
+				}
+				sampleCounter++;
+			}
+		}
+		codec_ctrl_init();
 	}
-	codec_ctrl_init();
-	xSemaphoreGive(audioSemaphore);
+}
+
+void playSound(Pizza * pizza)
+{
+	xQueueSendToBack(soundQueue, (void *) &(pizza->freq), 0);
 }
 
 boolean hasMissedDeadline(Pizza * pizza)
@@ -380,6 +388,10 @@ void stopCooking()
 	isCooking = false;
 }
 
+void shortPressEvent()
+{
+}
+
 
 void vLongPressEvent(void *pvParameters) {
 	startCooking();
@@ -429,21 +441,16 @@ void pizzaTask(void * pvParameter)
 	{
 		if  (xSemaphoreTake(taskData->semaphore, portMAX_DELAY))
 		{
+			GPIO_SetBits(GPIOD, pizza->led);
+			vTaskDelay(500 / portTICK_RATE_MS);
+			GPIO_ResetBits(GPIOD, pizza->led);
+			pizza->timeCooked++;
 			if (pizza->timeCooked == pizza->wcet)
 			{
-				playSound(pizza->freq);
+				playSound(pizza);
 				GPIO_ResetBits(GPIOD, pizza->led);
 			}
-			
-			else
-			{
-				GPIO_SetBits(GPIOD, pizza->led);
-				vTaskDelay(500 / portTICK_RATE_MS);
-				GPIO_ResetBits(GPIOD, pizza->led);
-				vTaskDelay(500 / portTICK_RATE_MS);
-				pizza->timeCooked++;
-			}
-					
+			vTaskDelay(500 / portTICK_RATE_MS);
 			scheduler();
 		}
 	}
@@ -463,6 +470,7 @@ void createTasks()
 	
 	xTaskCreate(detectButtonPress, "button task", STACK_SIZE_MIN, NULL, 1, NULL);
 	xTaskCreate(vMissedDeadlineAlert, "deadline alert", STACK_SIZE_MIN, NULL, 1, NULL);
+	xTaskCreate(vPlaySound, "sound task", STACK_SIZE_MIN, NULL, 1, NULL);
 	missedDeadlineSemaphore = xSemaphoreCreateBinary();
 }
 
@@ -472,8 +480,7 @@ int main()
 	InitLeds();
 	InitButton();
 	InitTimer();
-	audioSemaphore = xSemaphoreCreateBinary();
-	xSemaphoreGive(audioSemaphore);
+	soundQueue = xQueueCreate(4, sizeof(float));
 	NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
 	codec_init();
