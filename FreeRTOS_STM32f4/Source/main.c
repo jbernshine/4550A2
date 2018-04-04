@@ -420,14 +420,22 @@ void detectButtonPress(void *pvParameters) {
 				
 				// Button lifted
 				while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-					vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+					vTaskDelay((LONG_PRESS_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 					
-					// Still lifted
+					// Still lifted (short press)
 					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
 						if (xTimerIsTimerActive(xButtonTimer)) {
 							xTimerStop(xButtonTimer, 0);
 							shortPressEvent();
 						}
+					}
+					// Long press
+					else {
+						if (xTimerIsTimerActive(xButtonTimer)) {
+							xTimerStop(xButtonTimer, 0);
+							longPressEvent();
+						}
+					}
 					}
 				}
 		}
