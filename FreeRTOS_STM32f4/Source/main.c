@@ -29,6 +29,7 @@
 
 //Function prototypes
 void vLongPressEvent(void* params);
+void vDoublePressEvent(void* params);
 
 #define MS_TO_FORLOOP_ITERATIONS 50000
 
@@ -120,12 +121,14 @@ TaskData pizzaTasks[NUM_PIZZAS] = {
 /********************************
  * File Variables
  *******************************/
+volatile boolean isDoublePress = false;
 volatile boolean isCooking = false;
 unsigned int timeElapsed;
 fir_8 filt;
 SemaphoreHandle_t audioSemaphore;
 SemaphoreHandle_t missedDeadlineSemaphore;
 xTimerHandle xButtonTimer;
+xTimerHandle xDoublePressTimer;
 PizzaType scheduledPizza;
 PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
 QueueHandle_t soundQueue;
@@ -168,6 +171,7 @@ void InitButton()
 void InitTimer()
 {
 	xButtonTimer = xTimerCreate((const char*)"Long Press timer", pdMS_TO_TICKS(LONG_PRESS_THRESHOLD), pdFALSE, ( void * ) 0, vLongPressEvent);
+	xDoublePressTimer = xTimerCreate((const char*)"Double Press timer", pdMS_TO_TICKS(LONG_PRESS_THRESHOLD), pdFALSE, ( void * ) 0, vDoublePressEvent);
 }
 
 void turnOnLed(uint16_t led)
@@ -397,9 +401,16 @@ void longPressEvent()
 	xTimerStop(xButtonTimer, 0);
 }
 
+void doublePressEvent() {
+	
+}
 
 void vLongPressEvent(void *pvParameters) {
 	
+}
+
+void vDoublePressEvent (void *pvParameters) {
+	isDoublePress = true;
 }
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
@@ -414,20 +425,25 @@ void detectButtonPress(void *pvParameters) {
 				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
 				// Still pressed
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0 && isDoublePress == false) {
 					if (!xTimerIsTimerActive(xButtonTimer)) {
 						vTimerSetTimerID(xButtonTimer, 0);
 						xTimerReset(xButtonTimer, 0);
+					}
+					// Double Press
+					else if (isDoublePress == true) {
+						doublePressEvent();
 					}
 				}
 			}
 			
 			// Button lifted
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0 && !isDoublePress) {
 				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
 				// Still lifted
 				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+					xTimerReset(xDoublePressTimer, 0);
 					// Short Press
 					if (xTimerIsTimerActive(xButtonTimer)) {
 						xTimerStop(xButtonTimer, 0);
@@ -438,6 +454,11 @@ void detectButtonPress(void *pvParameters) {
 						longPressEvent();
 					}
 				}
+			}
+			
+			// Reset double press
+			if (isDoublePress) {
+				isDoublePress = false;
 			}
 		}
 	}
