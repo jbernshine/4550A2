@@ -419,9 +419,8 @@ void vDoublePressEvent (void *pvParameters) {
 }
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
-// Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
 void detectButtonPress(void *pvParameters) {
-		
+	
 	for(;;)
 	{
 		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
@@ -431,32 +430,40 @@ void detectButtonPress(void *pvParameters) {
 				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
 				// Still pressed
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0 && isDoublePress == false) {
 					if (!xTimerIsTimerActive(xButtonTimer)) {
 						vTimerSetTimerID(xButtonTimer, 0);
 						xTimerReset(xButtonTimer, 0);
+					}
+					// Double Press
+					else if (isDoublePress == true) {
+						doublePressEvent();
 					}
 				}
 			}
 			
 			// Button lifted
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-				vTaskDelay((LONG_PRESS_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0 && !isDoublePress) {
+				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
-				// Still lifted (short press)
+				// Still lifted
 				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+					xTimerReset(xDoublePressTimer, 0);
+					// Short Press
 					if (xTimerIsTimerActive(xButtonTimer)) {
 						xTimerStop(xButtonTimer, 0);
 						shortPressEvent();
 					}
-				}
-				// Long press
-				else {
-					if (xTimerIsTimerActive(xButtonTimer)) {
-						xTimerStop(xButtonTimer, 0);
+					// Long Press
+					else {
 						longPressEvent();
 					}
 				}
+			}
+			
+			// Reset double press
+			if (isDoublePress) {
+				isDoublePress = false;
 			}
 		}
 	}
