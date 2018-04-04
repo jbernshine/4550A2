@@ -407,7 +407,7 @@ void longPressEvent()
 }
 
 void doublePressEvent() {
-	stopCooking();
+	
 }
 
 void vLongPressEvent(void *pvParameters) {
@@ -419,33 +419,49 @@ void vDoublePressEvent (void *pvParameters) {
 }
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
+// Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
 void detectButtonPress(void *pvParameters) {
-	
+		
 	for(;;)
 	{
 		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
 			
 			// Button pressed
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0);
-			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-			if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0)
-			{
-				if (!isCooking)
-				{
-					isCooking = true;
-					startCooking();
-				}
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) >0) {
+				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
-				else
-				{
-					stopCooking();
-					isCooking = false;
+				// Still pressed
+				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+					if (!xTimerIsTimerActive(xButtonTimer)) {
+						vTimerSetTimerID(xButtonTimer, 0);
+						xTimerReset(xButtonTimer, 0);
+					}
+				}
+			}
+			
+			// Button lifted
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+				vTaskDelay((LONG_PRESS_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+				
+				// Still lifted (short press)
+				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+					if (xTimerIsTimerActive(xButtonTimer)) {
+						xTimerStop(xButtonTimer, 0);
+						shortPressEvent();
+					}
+				}
+				// Long press
+				else {
+					if (xTimerIsTimerActive(xButtonTimer)) {
+						xTimerStop(xButtonTimer, 0);
+						longPressEvent();
+					}
 				}
 			}
 		}
-		while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0);
 	}
 }
+
 void pizzaTask(void * pvParameter)
 {
 	TaskData * taskData = (TaskData*) pvParameter;
