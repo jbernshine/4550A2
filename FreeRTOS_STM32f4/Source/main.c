@@ -17,15 +17,7 @@
 
 #define NUM_TIMERS	5
 #define NUM_TASKS 5
-
-/**************************
-* This determines the scheduling discipline used. 
-* Possible values are:
-*		fixedPriority
-*		earliestDeadlineFirst
-*		leastLaxity
-*/
-#define SCHEDULING_DISCIPLINE fixedPriority
+#define NUM_SCHED_ALGORITHMS 3
 
 //Function prototypes
 void vLongPressEvent(void* params);
@@ -40,6 +32,7 @@ typedef enum Boolean
 } boolean;
 
 //Tasks
+
 
 typedef struct 
 {
@@ -105,6 +98,17 @@ Pizza pizzas[NUM_PIZZAS] = {
 	},
 };
 
+/*Scheduling algorithms*/
+PizzaType fixedPriority(PizzaType pizza1, PizzaType pizza2);
+PizzaType earliestDeadlineFirst(PizzaType pizza1, PizzaType pizza2);
+PizzaType leastLaxityFirst(PizzaType pizza1, PizzaType pizza2);
+
+PizzaType (*schedulingAlgorithms[NUM_SCHED_ALGORITHMS])(PizzaType pizza1, PizzaType pizza2) = {
+	fixedPriority,
+	earliestDeadlineFirst,
+	leastLaxityFirst,
+};
+
 TaskData pizzaTasks[NUM_PIZZAS] = {
 	[HAWAIIAN] = { .taskName = "Hawaiian" },
 	[VEGGIE] = { .taskName = "Veggie" },
@@ -115,7 +119,7 @@ TaskData pizzaTasks[NUM_PIZZAS] = {
 //Times in miliseconds
 #define BOUNCE_THRESHOLD 30
 #define PIZZA_COUNTDOWN_PERIOD 1000
-#define LONG_PRESS_THRESHOLD 300
+#define LONG_PRESS_THRESHOLD 500
 #define SOUND_DURATION 500
 
 /********************************
@@ -132,6 +136,7 @@ xTimerHandle xDoublePressTimer;
 PizzaType scheduledPizza;
 PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
 QueueHandle_t soundQueue;
+int selectedAlgorithm = -1;
 
 /********************************
  * Hardware initialization
@@ -335,6 +340,23 @@ void vMissedDeadlineAlert(void * params)
 	}
 }
 
+void setAlgorithm(int newAlgorithm)
+{
+	uint16_t leds[] = {
+		GPIO_Pin_13,
+		GPIO_Pin_14,
+		GPIO_Pin_15,
+	};
+	selectedAlgorithm = newAlgorithm;
+	schedulingDisciplineCompare = schedulingAlgorithms[newAlgorithm];
+	turnOnLed(leds[newAlgorithm]);
+}
+
+void cycleSchedulerAlgorithm()
+{
+	setAlgorithm((selectedAlgorithm +1) % NUM_SCHED_ALGORITHMS);
+}
+
 void startScheduler()
 {
 	timeElapsed = 0;
@@ -342,7 +364,6 @@ void startScheduler()
 	{
 		pizzas[i].timeCooked = 0;
 	}
-	schedulingDisciplineCompare = &SCHEDULING_DISCIPLINE;
 	scheduledPizza = NUM_PIZZAS - 1;
 }
 
@@ -386,7 +407,6 @@ void scheduler()
 
 void startCooking()
 {
-	isCooking = true;
 	startScheduler();
 	scheduler();
 }
@@ -394,20 +414,29 @@ void startCooking()
 void stopCooking()
 {
 	isCooking = false;
+	selectedAlgorithm = -1;
 }
 
 void shortPressEvent()
 {
+	cycleSchedulerAlgorithm();
 }
 
 void longPressEvent()
 {
-	startCooking();
-	xTimerStop(xButtonTimer, 0);
+	if (selectedAlgorithm >= 0)
+	{
+		isCooking = true;
+		GPIO_ResetBits(GPIOD, 0xFFFF);
+		startCooking();
+		xTimerStop(xButtonTimer, 0);
+	}
 }
 
 void doublePressEvent() {
-	
+	isCooking = false;
+	stopCooking();
+	xTimerStop(xDoublePressTimer, 0);
 }
 
 void vLongPressEvent(void *pvParameters) {
@@ -415,56 +444,68 @@ void vLongPressEvent(void *pvParameters) {
 }
 
 void vDoublePressEvent (void *pvParameters) {
-	isDoublePress = true;
+	isDoublePress = false;
 }
 
-// Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
-void detectButtonPress(void *pvParameters) {
-	
-	for(;;)
+void detectDoublePress()
+{
+	while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0);
+	vTaskDelay(BOUNCE_THRESHOLD / portTICK_RATE_MS);
+	if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0)
 	{
-		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
-			
-			// Button pressed
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) >0) {
-				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-				
-				// Still pressed
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0 && isDoublePress == false) {
-					if (!xTimerIsTimerActive(xButtonTimer)) {
-						vTimerSetTimerID(xButtonTimer, 0);
-						xTimerReset(xButtonTimer, 0);
-					}
-					// Double Press
-					else if (isDoublePress == true) {
-						doublePressEvent();
-					}
-				}
+		if (isDoublePress)
+		{
+			doublePressEvent();
+			xTimerStop(xDoublePressTimer, 0);
+		}
+		while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0);
+		vTaskDelay(BOUNCE_THRESHOLD / portTICK_RATE_MS);
+		if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0)
+		{
+			if (!isDoublePress)
+			{
+				isDoublePress = true;
+				xTimerReset(xDoublePressTimer, 0);
 			}
-			
-			// Button lifted
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0 && !isDoublePress) {
-				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-				
-				// Still lifted
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-					xTimerReset(xDoublePressTimer, 0);
-					// Short Press
-					if (xTimerIsTimerActive(xButtonTimer)) {
-						xTimerStop(xButtonTimer, 0);
-						shortPressEvent();
-					}
-					// Long Press
-					else {
-						longPressEvent();
-					}
-				}
-			}
-			
-			// Reset double press
-			if (isDoublePress) {
-				isDoublePress = false;
-			}
+			else
+				isDoublePress = !isDoublePress;
+		}
+	}
+}
+
+void detectShortOrLongPress()
+{
+	while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0);
+	vTaskDelay(BOUNCE_THRESHOLD / portTICK_RATE_MS);
+	if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0)
+	{
+		xTimerReset(xButtonTimer, 0);
+		while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0);
+		vTaskDelay(BOUNCE_THRESHOLD / portTICK_RATE_MS);
+		if (xTimerIsTimerActive(xButtonTimer))
+		{
+			shortPressEvent();
+			xTimerStop(xButtonTimer, 0);
+		}
+		else
+		{
+			longPressEvent();
+		}
+	}
+}
+
+void detectButtonPress(void * pvParameters)
+{
+	for (;;)
+	{
+		if (isCooking)
+		{
+			detectDoublePress();
+		}
+		
+		else
+		{
+			detectShortOrLongPress();
 		}
 	}
 }
