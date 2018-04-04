@@ -18,6 +18,15 @@
 #define NUM_TIMERS	5
 #define NUM_TASKS 5
 
+/**************************
+* This determines the scheduling discipline used. 
+* Possible values are:
+*		fixedPriority
+*		earliestDeadlineFirst
+*		leastLaxity
+*/
+#define SCHEDULING_DISCIPLINE fixedPriority
+
 //Function prototypes
 void vLongPressEvent(void* params);
 
@@ -108,8 +117,6 @@ TaskData pizzaTasks[NUM_PIZZAS] = {
 #define LONG_PRESS_THRESHOLD 300
 #define SOUND_DURATION 500
 
-#define BUTTON_TIMER TIM2
-
 /********************************
  * File Variables
  *******************************/
@@ -118,10 +125,11 @@ volatile boolean isCooking = false;
 unsigned int timeElapsed;
 fir_8 filt;
 SemaphoreHandle_t audioSemaphore;
+SemaphoreHandle_t missedDeadlineSemaphore;
 xTimerHandle xButtonTimer;
-TaskHandle_t xTasks[NUM_TASKS];
 PizzaType scheduledPizza;
 PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
+
 
 /********************************
  * Hardware initialization
@@ -158,7 +166,7 @@ void InitButton()
 	GPIO_Init(GPIOA, &GPIO_Initstructure);
 }
 
-void InitTimers()
+void InitTimer()
 {
 	xButtonTimer = xTimerCreate((const char*)"Long Press timer", pdMS_TO_TICKS(LONG_PRESS_THRESHOLD), pdFALSE, ( void * ) 0, vLongPressEvent);
 }
@@ -291,14 +299,35 @@ PizzaType chooseHigherPriority(PizzaType pizzaType1, PizzaType pizzaType2)
 	return higherPriority;
 }
 
-void initScheduler()
+void vMissedDeadlineAlert(void * params)
+{
+	for (;;)
+	{
+		xSemaphoreTake(missedDeadlineSemaphore, portMAX_DELAY);
+		uint16_t leds = 0;
+		Pizza * pizza;
+		for (int i = 0; i < NUM_PIZZAS; i++)
+		{
+			pizza = &pizzas[i];
+			if (timeUntilDeadline(pizza) == 0 && !finishedCooking(pizza))
+				leds |= pizzas[i].led;
+		}
+		vTaskDelay(100);
+		GPIO_ToggleBits(GPIOD, leds);
+		vTaskDelay(50);
+		GPIO_ToggleBits(GPIOD, leds);
+		vTaskDelay(50);
+		GPIO_ToggleBits(GPIOD, leds);
+		vTaskDelay(100);
+		GPIO_ToggleBits(GPIOD, leds);
+		timeElapsed += 1;
+	}
+}
+
+void startScheduler()
 {
 	timeElapsed = 0;
-	for (int i = 0; i < NUM_PIZZAS; i++)
-	{
-		pizzas[i].timeCooked = 0;
-	}
-	schedulingDisciplineCompare = &leastLaxityFirst;
+	schedulingDisciplineCompare = &SCHEDULING_DISCIPLINE;
 	scheduledPizza = NUM_PIZZAS - 1;
 }
 
@@ -333,16 +362,16 @@ void scheduler()
 		{
 			scheduledPizza = currHighest;
 			xSemaphoreGive(nextTask->semaphore);
+			xSemaphoreGive(missedDeadlineSemaphore);
 			taskStarted = true;
 		}
-		timeElapsed += 1;
 	}
 }
 
 void startCooking()
 {
 	isCooking = true;
-	initScheduler();
+	startScheduler();
 	scheduler();
 }
 
@@ -351,38 +380,47 @@ void stopCooking()
 	isCooking = false;
 }
 
-//Handle button input depending on the state of the program.
-void buttonPressEvent() {
-	if (isCooking)
-	{
-		stopCooking();
-	}
-	else
-	{
-		startCooking();
-	}
-}
-
 
 void vLongPressEvent(void *pvParameters) {
+	startCooking();
+	xTimerStop(xButtonTimer, 0);
 }
 
 // Taken from https://github.com/istarc/stm32/blob/master/examples/FreeRTOS/src/main.c
-void detectButtonPress(void *pvParameters) 
-{
+void detectButtonPress(void *pvParameters) {
+		
 	for(;;)
-	{
-		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
-			// Button pressed
-			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-			if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0)
-				buttonPressEvent();
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) > 0);
-			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+		{
+			if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+				
+				// Button pressed
+				while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) >0) {
+					vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+					
+					// Still pressed
+					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
+						if (!xTimerIsTimerActive(xButtonTimer)) {
+							vTimerSetTimerID(xButtonTimer, 0);
+							xTimerReset(xButtonTimer, 0);
+						}
+					}
+				}
+				
+				// Button lifted
+				while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+					vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+					
+					// Still lifted
+					if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
+						if (xTimerIsTimerActive(xButtonTimer)) {
+							xTimerStop(xButtonTimer, 0);
+							shortPressEvent();
+						}
+					}
+				}
 		}
 	}
 }
-
 void pizzaTask(void * pvParameter)
 {
 	TaskData * taskData = (TaskData*) pvParameter;
@@ -424,6 +462,8 @@ void createTasks()
 	}
 	
 	xTaskCreate(detectButtonPress, "button task", STACK_SIZE_MIN, NULL, 1, NULL);
+	xTaskCreate(vMissedDeadlineAlert, "deadline alert", STACK_SIZE_MIN, NULL, 1, NULL);
+	missedDeadlineSemaphore = xSemaphoreCreateBinary();
 }
 
 int main()
@@ -431,14 +471,13 @@ int main()
 	SystemInit();
 	InitLeds();
 	InitButton();
-	InitTimers();
+	InitTimer();
 	audioSemaphore = xSemaphoreCreateBinary();
 	xSemaphoreGive(audioSemaphore);
 	NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
 	codec_init();
 	initFilter(&filt);
-	
 	createTasks();
 	vTaskStartScheduler();
 }
