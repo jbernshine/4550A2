@@ -338,6 +338,10 @@ void vMissedDeadlineAlert(void * params)
 void startScheduler()
 {
 	timeElapsed = 0;
+	for (int i = 0; i < NUM_PIZZAS; i++)
+	{
+		pizzas[i].timeCooked = 0;
+	}
 	schedulingDisciplineCompare = &SCHEDULING_DISCIPLINE;
 	scheduledPizza = NUM_PIZZAS - 1;
 }
@@ -368,6 +372,7 @@ void scheduler()
 		if (finishedCooking(&pizzas[currHighest]))
 		{
 			vTaskDelay(1000);
+			timeElapsed++;
 		}
 		else
 		{
@@ -421,46 +426,24 @@ void detectButtonPress(void *pvParameters) {
 		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0) {
 			
 			// Button pressed
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) >0) {
-				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
-				
-				// Still pressed
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0)>0 && isDoublePress == false) {
-					if (!xTimerIsTimerActive(xButtonTimer)) {
-						vTimerSetTimerID(xButtonTimer, 0);
-						xTimerReset(xButtonTimer, 0);
-					}
-					// Double Press
-					else if (isDoublePress == true) {
-						doublePressEvent();
-					}
+			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0);
+			vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
+			if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0)
+			{
+				if (!isCooking)
+				{
+					isCooking = true;
+					startCooking();
 				}
-			}
-			
-			// Button lifted
-			while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0 && !isDoublePress) {
-				vTaskDelay((BOUNCE_THRESHOLD) / portTICK_RATE_MS); /* Button Debounce Delay */
 				
-				// Still lifted
-				if (GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_0) == 0) {
-					xTimerReset(xDoublePressTimer, 0);
-					// Short Press
-					if (xTimerIsTimerActive(xButtonTimer)) {
-						xTimerStop(xButtonTimer, 0);
-						shortPressEvent();
-					}
-					// Long Press
-					else {
-						longPressEvent();
-					}
+				else
+				{
+					stopCooking();
+					isCooking = false;
 				}
-			}
-			
-			// Reset double press
-			if (isDoublePress) {
-				isDoublePress = false;
 			}
 		}
+		while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0);
 	}
 }
 void pizzaTask(void * pvParameter)
