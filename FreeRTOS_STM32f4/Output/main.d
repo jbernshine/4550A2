@@ -1,4 +1,5 @@
 .\output\main.o: Source\main.c
+.\output\main.o: Source\main.h
 .\output\main.o: .\Libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\output\main.o: .\Libraries\CMSIS\Include\core_cm4.h
 .\output\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
@@ -34,7 +35,7 @@
 .\output\main.o: .\Libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_usart.h
 .\output\main.o: .\Libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_wwdg.h
 .\output\main.o: .\Libraries\STM32F4xx_StdPeriph_Driver\inc\misc.h
-.\output\main.o: .\Include\discoveryf4utils.h
+.\output\main.o: Source\codec.h
 .\output\main.o: .\FreeRTOS\include\FreeRTOS.h
 .\output\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
 .\output\main.o: .\FreeRTOS\include\FreeRTOSConfig.h
@@ -48,4 +49,5 @@
 .\output\main.o: .\FreeRTOS\include\list.h
 .\output\main.o: .\FreeRTOS\include\croutine.h
 .\output\main.o: .\FreeRTOS\include\list.h
+.\output\main.o: .\FreeRTOS\include\semphr.h
 .\output\main.o: .\FreeRTOS\include\timers.h

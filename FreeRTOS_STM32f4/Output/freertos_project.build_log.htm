@@ -5,7 +5,7 @@
 <h2>Tool Versions:</h2>
 IDE-Version: µVision V5.24.2.0
 Copyright (C) 2017 ARM Ltd and ARM Germany GmbH. All rights reserved.
-License Information: Justine Bernshine, University of Manitoba, LIC=----
+License Information: Chris Green, University of Manitoba, LIC=----
  
 Tool Versions:
 Toolchain:       MDK-Lite  Version: 5.24.1
@@ -21,25 +21,49 @@ Target DLL:      STLink\ST-LINKIII-KEIL_SWO.dll V3.0.1.0
 Dialog DLL:      TCM.DLL V1.32.0.0
  
 <h2>Project:</h2>
-C:\Users\Joseph\Desktop\FreeRTOS Sample\FreeRTOS_STM32f4\freertos_project.uvprojx
-Project File Date:  03/13/2018
+C:\Users\Chris\Desktop\justines4550A2\4550A2\FreeRTOS_STM32f4\freertos_project.uvprojx
+Project File Date:  04/03/2018
 
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'freertos_project'
 compiling main.c...
-linking...
-Program Size: Code=19684 RO-data=488 RW-data=188 ZI-data=78772  
-FromELF: creating hex file...
-".\Output\freertos_project.axf" - 0 Error(s), 0 Warning(s).
+Source\codec.h(82): warning:  #1-D: last line of file ends without a newline
+  #endif /* __CODEC_H */
+Source\main.c(198): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+      		sample = (int16_t)(
+OTEAMPLITUDE*filteredSaw);
+Source\main.c(209): warning:  #188-D: enumerated type mixed with another type
+  	return timeElapsed % pizza->period >= pizza->deadline;
+Source\main.c(214): warning:  #188-D: enumerated type mixed with another type
+  	return pizza->wcet == pizza->timeCooked;
+Source\main.c(331): warning:  #188-D: enumerated type mixed with another type
+  	scheduledPizza = NUM_PIZZAS - 1;
+Source\main.c(342): warning:  #188-D: enumerated type mixed with another type
+  		currHighest = (scheduledPizza + 1) % NUM_PIZZAS;
+Source\main.c(350): warning:  #188-D: enumerated type mixed with another type
+  			nextIndex = (scheduledPizza + i + 1) % NUM_PIZZAS;
+Source\main.c(417): warning:  #223-D: function "shortPressEvent" declared implicitly
+  							shortPressEvent();
+Source\main.c(424): warning:  #223-D: function "longPressEvent" declared implicitly
+  							longPressEvent();
+Source\main.c(431): error:  #169: expected a declaration
+  }
+Source\main.c(455): warning:  #12-D: parsing restarts here after previous syntax error
+  			scheduler();
+Source\main.c(456): error:  #169: expected a declaration
+  		}
+Source\main.c(532): warning: At end of source:  #12-D: parsing restarts here after previous syntax error
+Source\main.c: 11 warnings, 2 errors
+".\Output\freertos_project.axf" - 2 Error(s), 11 Warning(s).
 
 <h2>Software Packages used:</h2>
 
 Package Vendor: ARM
-                http://www.keil.com/pack/ARM.CMSIS.5.0.1.pack
-                ARM.CMSIS.5.0.1
+                http://www.keil.com/pack/ARM.CMSIS.5.3.0.pack
+                ARM.CMSIS.5.3.0
                 CMSIS (Cortex Microcontroller Software Interface Standard)
-   * Component: CORE Version: 5.0.1
+   * Component: CORE Version: 5.1.1
 
 Package Vendor: Keil
                 http://www.keil.com/pack/Keil.STM32F4xx_DFP.1.0.8.pack
@@ -48,13 +72,14 @@ Package Vendor: Keil
 
 <h2>Collection of Component include folders:</h2>
   .\RTE\_freertos_project
-  C:\Keil_v5\ARM\PACK\ARM\CMSIS\5.0.1\CMSIS\Include
+  C:\Keil_v5\ARM\PACK\ARM\CMSIS\5.3.0\CMSIS\Include
   C:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\1.0.8\Device\Include
 
 <h2>Collection of Component Files used:</h2>
 
-   * Component: ARM::CMSIS:CORE:5.0.1
-Build Time Elapsed:  00:00:03
+   * Component: ARM::CMSIS:CORE:5.1.1
+Target not created.
+Build Time Elapsed:  00:00:01
 </pre>
 </body>
 </html>
