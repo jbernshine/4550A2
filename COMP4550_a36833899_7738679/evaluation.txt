@@ -1,0 +1,29 @@
+We evaluated this by running the task for 50 * the period of the longest running task, or 2000 seconds, for each scheduling algorithm. Using Fixed Priority Scheduling, we got the following results:
+
+Pizza type		Deadline Misses
+Hawaiian		50
+Veggie			17
+Pepperoni		0
+Seafood			0
+
+When using Earliest Deadline First, we found:
+
+Pizza type		Deadline Misses
+Hawaiian		0
+Veggie			17
+Pepperoni		50
+Seafood			0
+
+For Least Laxity First:
+
+Pizza type		Deadline Misses
+Hawaiian		50
+Veggie			17
+Pepperoni		0
+Seafood			0
+
+Obersvations:
+
+For each algorithm, the Seafood pizza never misses its deadline. This makes sense given that it has the highest priority. In addition, it has a short deadline, which will cause Earliest Deadline First and Least Laxity to prioritize it.
+
+Despite having a higher priority than the Veggie pizza, the Hawaiian pizza always misses its deadline for Fixed Priority Scheduling, while the Veggie pizza only sometimes does. This is because it has the same priority and period as Pepperoni, and Seafood's period divides its period. This means that each time it runs, it must compete for the scheduler with other tasks of equal or higher priority. Veggie's period is not in sync with the other pizzas. It misses its deadline when its period conflicts with the other tasks, and makes its deadline otherwise.

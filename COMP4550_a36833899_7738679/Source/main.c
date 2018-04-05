@@ -137,6 +137,7 @@ PizzaType scheduledPizza;
 PizzaType(*schedulingDisciplineCompare) (PizzaType, PizzaType);
 QueueHandle_t soundQueue;
 int selectedAlgorithm = -1;
+int missedDeadlines[NUM_PIZZAS];
 
 /********************************
  * Hardware initialization
@@ -326,7 +327,10 @@ void vMissedDeadlineAlert(void * params)
 		{
 			pizza = &pizzas[i];
 			if (timeUntilDeadline(pizza) == 0 && !finishedCooking(pizza))
+			{
 				leds |= pizzas[i].led;
+				missedDeadlines[i]++;
+			}
 		}
 		vTaskDelay(100);
 		GPIO_ToggleBits(GPIOD, leds);
@@ -362,6 +366,7 @@ void startScheduler()
 	timeElapsed = 0;
 	for (int i = 0; i < NUM_PIZZAS; i++)
 	{
+		missedDeadlines[i] = 0;
 		pizzas[i].timeCooked = 0;
 	}
 	scheduledPizza = NUM_PIZZAS - 1;
@@ -370,12 +375,25 @@ void startScheduler()
 void scheduler()
 {
 	boolean taskStarted = false;
+	int h, v, p, s;
+	TaskData * nextTask;
+	PizzaType currHighest;
+	PizzaType nextIndex;
+
 	while (!taskStarted && isCooking)
 	{
-		TaskData * nextTask;
-		PizzaType currHighest;
-		PizzaType nextIndex;
 		currHighest = (scheduledPizza + 1) % NUM_PIZZAS;
+		
+		if (timeElapsed == 50 * 40)
+		{
+			//This is a kind of ugly way of examining the 
+			//number of missed deadlines. Set a breakpoint
+			//and look at the values assigned to these variables.
+			h = missedDeadlines[HAWAIIAN];
+			v = missedDeadlines[VEGGIE];
+			p = missedDeadlines[PEPPERONI];
+			s = missedDeadlines[SEAFOOD];
+		}
 		
 		for (int i = 0; i < NUM_PIZZAS; i++)
 		{
@@ -458,6 +476,7 @@ void detectDoublePress()
 			doublePressEvent();
 			xTimerStop(xDoublePressTimer, 0);
 		}
+		
 		while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) > 0);
 		vTaskDelay(BOUNCE_THRESHOLD / portTICK_RATE_MS);
 		if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0)
@@ -542,12 +561,12 @@ void createTasks()
 		taskData->pizza = &pizzas[i];
 		taskData->taskHandle = (TaskHandle_t)i;
 		taskData->semaphore = xSemaphoreCreateBinary();
-		xTaskCreate(pizzaTask, taskData->taskName, STACK_SIZE_MIN, (void*)taskData, 1, taskData->taskHandle);
+		xTaskCreate(pizzaTask, taskData->taskName, STACK_SIZE_MIN, (void*)taskData, 2, taskData->taskHandle);
 	}
 	
 	xTaskCreate(detectButtonPress, "button task", STACK_SIZE_MIN, NULL, 1, NULL);
-	xTaskCreate(vMissedDeadlineAlert, "deadline alert", STACK_SIZE_MIN, NULL, 1, NULL);
-	xTaskCreate(vPlaySound, "sound task", STACK_SIZE_MIN, NULL, 1, NULL);
+	xTaskCreate(vMissedDeadlineAlert, "deadline alert", STACK_SIZE_MIN, NULL, 2, NULL);
+	xTaskCreate(vPlaySound, "sound task", STACK_SIZE_MIN, NULL, 2, NULL);
 	missedDeadlineSemaphore = xSemaphoreCreateBinary();
 }
 

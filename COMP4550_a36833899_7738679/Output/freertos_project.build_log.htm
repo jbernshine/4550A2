@@ -28,24 +28,32 @@ Project File Date:  04/03/2018
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'freertos_project'
 compiling main.c...
-Source\main.c(209): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+Source\main.c(210): warning:  #1035-D: single-precision operand implicitly converted to double-precision
   					sample = (int16_t)(
 OTEAMPLITUDE*filteredSaw);
-Source\main.c(225): warning:  #188-D: enumerated type mixed with another type
+Source\main.c(226): warning:  #188-D: enumerated type mixed with another type
   	return timeElapsed % pizza->period >= pizza->deadline;
-Source\main.c(230): warning:  #188-D: enumerated type mixed with another type
+Source\main.c(231): warning:  #188-D: enumerated type mixed with another type
   	return pizza->wcet == pizza->timeCooked;
-Source\main.c(367): warning:  #188-D: enumerated type mixed with another type
+Source\main.c(372): warning:  #188-D: enumerated type mixed with another type
   	scheduledPizza = NUM_PIZZAS - 1;
-Source\main.c(378): warning:  #188-D: enumerated type mixed with another type
+Source\main.c(385): warning:  #188-D: enumerated type mixed with another type
   		currHighest = (scheduledPizza + 1) % NUM_PIZZAS;
-Source\main.c(388): warning:  #188-D: enumerated type mixed with another type
+Source\main.c(406): warning:  #188-D: enumerated type mixed with another type
   			nextIndex = (scheduledPizza + i + 1) % NUM_PIZZAS;
-Source\main.c: 6 warnings, 0 errors
+Source\main.c(378): warning:  #550-D: variable "h"  was set but never used
+  	int h, v, p, s;
+Source\main.c(378): warning:  #550-D: variable "v"  was set but never used
+  	int h, v, p, s;
+Source\main.c(378): warning:  #550-D: variable "p"  was set but never used
+  	int h, v, p, s;
+Source\main.c(378): warning:  #550-D: variable "s"  was set but never used
+  	int h, v, p, s;
+Source\main.c: 10 warnings, 0 errors
 linking...
-Program Size: Code=24884 RO-data=472 RW-data=428 ZI-data=78836  
+Program Size: Code=24940 RO-data=472 RW-data=428 ZI-data=78852  
 FromELF: creating hex file...
-".\Output\freertos_project.axf" - 0 Error(s), 6 Warning(s).
+".\Output\freertos_project.axf" - 0 Error(s), 10 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -68,7 +76,7 @@ Package Vendor: Keil
 <h2>Collection of Component Files used:</h2>
 
    * Component: ARM::CMSIS:CORE:5.1.1
-Build Time Elapsed:  00:00:02
+Build Time Elapsed:  00:00:03
 </pre>
 </body>
 </html>
