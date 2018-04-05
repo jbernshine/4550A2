@@ -377,15 +377,15 @@ void scheduler()
 		PizzaType nextIndex;
 		currHighest = (scheduledPizza + 1) % NUM_PIZZAS;
 		
-		if (pizzas[currHighest].period == 0)
+		for (int i = 0; i < NUM_PIZZAS; i++)
 		{
-			pizzas->timeCooked = 0;
+			if (timeElapsed % pizzas[i].period == 0)
+				pizzas[i].timeCooked = 0;
 		}
+
 		for (int i = 1; i < NUM_PIZZAS; i++)
 		{
 			nextIndex = (scheduledPizza + i + 1) % NUM_PIZZAS;
-			if (timeElapsed % pizzas[nextIndex].period == 0)
-				pizzas[nextIndex].timeCooked = 0;
 			currHighest = chooseHigherPriority(currHighest, nextIndex);
 		}
 		nextTask = &pizzaTasks[currHighest];
@@ -468,7 +468,7 @@ void detectDoublePress()
 				xTimerReset(xDoublePressTimer, 0);
 			}
 			else
-				isDoublePress = !isDoublePress;
+				isDoublePress = false;
 		}
 	}
 }
